@@ -3,12 +3,25 @@ import { UserAgent, RegistererState, SessionState, Registerer, URI, Inviter, Ses
 import { Phone, PhoneOff, Mic, MicOff, Pause, Settings, Copy, Circle, PhoneIncoming } from 'lucide-react';
 import { SipConfig, CallState } from '../types/sipConfig';
 import { useRingTone } from './ringtone';
-import HoldButton from './HoldButton';
-import TransferButton from './TransferButton';
-import generateAuthorizationHa1 from './generateAuthorizationHa1';
-import formatTime from './formatTime';
-import defaultConfig from './defaultConfig';
-import KeepAlive from './KeepAlive';
+
+const defaultConfig: SipConfig = {
+  username: '',
+  password: '',
+  domain: '',
+  proxy: 'webrtc.dazsoft.com:8080',
+  ramal_number: '',
+  protocolo: 'wss://',
+  executaAudioDeEncerramentoDeChamada: 0,
+  autoAtendimento: '0',
+  authorizationHa1: ''
+};
+
+const formatTime = (ms: number): string => {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+};
 
 const WebSoftphone: React.FC = () => {
   const [config, setConfig] = useState<SipConfig>(() => {
@@ -30,7 +43,6 @@ const WebSoftphone: React.FC = () => {
     ringingStartTime: null
   });
 
-  
   const [elapsedTime, setElapsedTime] = useState<string>('00:00');
   const [ringingTime, setRingingTime] = useState<string>('00:00');
   const timerRef = useRef<number>();
@@ -51,16 +63,7 @@ const WebSoftphone: React.FC = () => {
 
   useEffect(() => {
     if (config.username && config.password && config.domain) {
-      const updateConfigWithHa1 = async () => {
-        const authorizationHa1 = await generateAuthorizationHa1(config.username, config.password, config.domain);
-        const updatedConfig = {
-          ...config,
-          authorizationHa1
-        };
-        setConfig(updatedConfig);
-        initializeSIP(updatedConfig);
-      };
-      updateConfigWithHa1();
+      initializeSIP();
     }
     return () => {
       cleanupSession();
@@ -74,7 +77,7 @@ const WebSoftphone: React.FC = () => {
         clearInterval(registerIntervalRef.current);
       }
     };
-  }, [config.username, config.password, config.domain]);
+  }, [config]);
 
   useEffect(() => {
     if (callState.callStartTime) {
@@ -160,12 +163,6 @@ const WebSoftphone: React.FC = () => {
       clearInterval(ringingTimerRef.current);
     }
 
-    // Stop hold music
-    if (holdAudioRef.current) {
-      holdAudioRef.current.pause();
-      holdAudioRef.current.currentTime = 0;
-    }
-
     setCallState(prev => ({
       ...prev,
       isInCall: false,
@@ -203,95 +200,57 @@ const WebSoftphone: React.FC = () => {
       remoteAudioRef.current.play().catch(error => {
         console.error('Error playing remote audio:', error);
       });
-
-      // Verifica se o canal de DTMF está disponível
-      const dtmfSender = peerConnection.getSenders().find((sender: any) => sender.track?.kind === 'audio')?.dtmf;
-      if (!dtmfSender) {
-        console.error('DTMF sender not available');
-      }
     }
   };
 
-  const initializeSIP = async (updatedConfig: SipConfig) => {
+  const initializeSIP = async () => {
     try {
-      if (!updatedConfig.username || !updatedConfig.password || !updatedConfig.domain) {
+      if (!config.username || !config.password || !config.domain) {
         throw new Error('Missing required configuration');
       }
 
-      console.log('Initializing SIP connection...', { updatedConfig });
+      console.log('Initializing SIP connection...', { config });
       setCallState(prev => ({ ...prev, isRegistering: true }));
       setStatusColor('text-yellow-500');
 
-      const uri = UserAgent.makeURI(`sip:${updatedConfig.username}@${updatedConfig.domain}`);
+      const uri = UserAgent.makeURI(`sip:${config.username}@${config.domain}`);
       if (!uri) {
         throw new Error('Failed to create URI');
       }
 
-      const wsServer = `${updatedConfig.protocolo}${updatedConfig.proxy}`;
+      const wsServer = `${config.protocolo}${config.proxy}`;
 
       const userAgent = new UserAgent({
-  uri,
-  userAgentString: "KVOIP SIP", // Define o UserAgent
-  transportOptions: {
-    server: wsServer,
-    traceSip: true,
-    wsServers: [wsServer]
-  },
-  authorizationUsername: updatedConfig.username,
-  authorizationPassword: updatedConfig.password,
-  displayName: updatedConfig.username,
-  contactName: updatedConfig.username,
-  noAnswerTimeout: 60,
-  hackIpInContact: false,
-  logLevel: 'error',
-  logConnector: console.log,
-  sessionDescriptionHandlerFactoryOptions: {
-    constraints: {
-      audio: true,
-      video: false
-    },
-    peerConnectionOptions: {
-      rtcConfiguration: {
-        iceServers: [
-          { urls: ['stun:stun.l.google.com:19302'] }
-        ]
-      }
-    },
-    modifiers: [
-      (description: RTCSessionDescriptionInit) => {
-        description.sdp = description.sdp?.replace('a=rtpmap:101 telephone-event/8000', 'a=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15');
-        return Promise.resolve(description);
-      }
-    ]
-  }
-});
+        uri,
+        transportOptions: {
+          server: wsServer,
+          traceSip: true,
+          wsServers: [wsServer]
+        },
+        authorizationUsername: config.username,
+        authorizationPassword: config.password,
+        displayName: config.username,
+        contactName: config.username,
+        noAnswerTimeout: 60,
+        hackIpInContact: true,
+        logLevel: 'debug',
+        logConnector: console.log,
+        sessionDescriptionHandlerFactoryOptions: {
+          constraints: {
+            audio: true,
+            video: false
+          },
+          peerConnectionOptions: {
+            rtcConfiguration: {
+              iceServers: [
+                { urls: ['stun:stun.l.google.com:19302'] }
+              ]
+            }
+          }
+        }
+      });
 
-// Manter o UserAgent na referência
-userAgentRef.current = userAgent;
-
-// Enviar pacotes OPTIONS a cada 30 segundos
-setInterval(() => {
-  const optionsRequest = new Request('OPTIONS', {
-    to: uri,
-    from: uri,
-    headers: {
-      to: { uri: uri },
-      from: { uri: uri },
-      'max-forwards': 70
-    }
-  });
-
-  userAgent.transport.send(optionsRequest);
-  console.log("Pacote OPTIONS enviado para manter a conexão ativa.");
-}, 30000); // Intervalo de 30 segundos
-
-// Evento para encerrar a conexão quando a página for fechada ou recarregada
-window.addEventListener("beforeunload", () => {
-  if (userAgentRef.current) {
-    userAgentRef.current.terminate(); // Encerra a conexão SIP
-    console.log("Conexão SIP encerrada.");
-  }
-});
+      userAgentRef.current = userAgent;
 
       userAgent.delegate = {
         onInvite: (invitation) => {
@@ -325,7 +284,6 @@ window.addEventListener("beforeunload", () => {
                 callStartTime: Date.now(),
                 ringingStartTime: null
               }));
-              console.log('Incoming call accepted:', invitationRef.current);
             } else if (state === SessionState.Terminated) {
               cleanupSession();
             }
@@ -337,7 +295,7 @@ window.addEventListener("beforeunload", () => {
         console.log('Transport connected');
         try {
           const registerer = new Registerer(userAgent, {
-            expires: 10,//tempo de registro
+            expires: 300,
             extraHeaders: ['X-oauth-dazsoft: 1'],
             regId: 1,
             params: {
@@ -374,7 +332,7 @@ window.addEventListener("beforeunload", () => {
                 console.error('Error renewing registration:', error);
               });
             }
-          }, 20000); // Renew registration every 4.5 minutes (270000 ms)
+          }, 270000); // Renew registration every 4.5 minutes (270000 ms)
 
         } catch (error) {
           console.error('Registration error:', error);
@@ -426,7 +384,7 @@ window.addEventListener("beforeunload", () => {
       }
       
       const inviter = new Inviter(userAgentRef.current, target, {
-        extraHeaders: ['X-oauth-dazsoft: 1', 'Allow: INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, SUBSCRIBE, INFO, DTMF'],
+        extraHeaders: ['X-oauth-dazsoft: 1'],
         sessionDescriptionHandlerOptions: {
           constraints: {
             audio: true,
@@ -453,7 +411,6 @@ window.addEventListener("beforeunload", () => {
             callStartTime: Date.now(),
             ringingStartTime: null
           }));
-          console.log('Active call established:', inviter);
         } else if (state === SessionState.Terminated) {
           cleanupSession();
         }
@@ -488,7 +445,6 @@ window.addEventListener("beforeunload", () => {
       });
 
       setupRemoteMedia(invitationRef.current);
-      console.log('Incoming call accepted:', invitationRef.current);
     } catch (error) {
       console.error('Error accepting call:', error);
       cleanupSession();
@@ -529,6 +485,55 @@ window.addEventListener("beforeunload", () => {
     }
   };
 
+  const handleHold = () => {
+    if (sessionRef.current?.state === SessionState.Established) {
+      try {
+        if (callState.isOnHold) {
+          sessionRef.current.unhold().then(() => {
+            // Reativar o microfone
+            const audioTrack = sessionRef.current?.sessionDescriptionHandler
+              ?.peerConnection
+              ?.getSenders()
+              .find((sender: any) => sender.track?.kind === 'audio');
+            
+            if (audioTrack?.track) {
+              audioTrack.track.enabled = true;
+            }
+
+            // Parar a música de espera
+            holdAudioRef.current.pause();
+            holdAudioRef.current.currentTime = 0;
+          }).catch(error => {
+            console.error('Error unholding call:', error);
+          });
+        } else {
+          sessionRef.current.hold().then(() => {
+            // Cortar o áudio do microfone
+            const audioTrack = sessionRef.current?.sessionDescriptionHandler
+              ?.peerConnection
+              ?.getSenders()
+              .find((sender: any) => sender.track?.kind === 'audio');
+            
+            if (audioTrack?.track) {
+              audioTrack.track.enabled = false;
+            }
+
+            // Tocar a música de espera
+            holdAudioRef.current.currentTime = 0;
+            holdAudioRef.current.play().catch(error => {
+              console.error('Error playing hold music:', error);
+            });
+          }).catch(error => {
+            console.error('Error holding call:', error);
+          });
+        }
+        setCallState(prev => ({ ...prev, isOnHold: !prev.isOnHold }));
+      } catch (error) {
+        console.error('Error toggling hold:', error);
+      }
+    }
+  };
+
   const handleCopyEmbedCode = () => {
     const embedCode = `<iframe src="YOUR_DEPLOYMENT_URL" width="400" height="100" frameborder="0"></iframe>`;
     navigator.clipboard.writeText(embedCode);
@@ -540,28 +545,9 @@ window.addEventListener("beforeunload", () => {
     setShowSettings(false);
   };
 
-  const sendDTMF = (tone: string) => {
-    if (sessionRef.current?.state === SessionState.Established) {
-      const dtmfSender = sessionRef.current.sessionDescriptionHandler
-        ?.peerConnection
-        ?.getSenders()
-        .find((sender: any) => sender.track?.kind === 'audio')
-        ?.dtmf;
-      if (dtmfSender) {
-        console.log(`Sending DTMF: ${tone}`);
-        dtmfSender.insertDTMF(tone, 500);
-        console.log(`SIP Header: ${JSON.stringify(sessionRef.current.request.headers)}`);
-      } else {
-        console.error('DTMF sender not available');
-      }
-    }
-  };
-
   return (
     <div className="bg-white rounded-lg shadow-lg p-4 max-w-md w-full mx-auto">
       <audio ref={remoteAudioRef} autoPlay />
-      
-      <KeepAlive registerer={registererRef.current} />
       
       <div className="flex flex-col gap-4">
         {/* Status bar */}
@@ -644,23 +630,12 @@ window.addEventListener("beforeunload", () => {
                       {callState.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                     </button>
                     
-                    <HoldButton 
-                      session={sessionRef.current} 
-                      isOnHold={callState.isOnHold} 
-                      setCallState={setCallState} 
-                    />
-
-                    <TransferButton 
-                      session={sessionRef.current} 
-                      type="attended" 
-                      sendDTMF={sendDTMF} 
-                    />
-
-                    <TransferButton 
-                      session={sessionRef.current} 
-                      type="blind" 
-                      sendDTMF={sendDTMF} 
-                    />
+                    <button 
+                      onClick={handleHold} 
+                      className={`p-2 rounded-full hover:bg-blue-50 ${callState.isOnHold ? 'text-red-600' : 'text-blue-600'}`}
+                    >
+                      <Pause className="w-5 h-5" />
+                    </button>
                     
                     <button 
                       onClick={handleEndCall} 
